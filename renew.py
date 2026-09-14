@@ -46,18 +46,23 @@ def main():
             print("正在访问登录页面...")
             send_tg_message("正在尝试打开登录页面...")
             
-            # 访问登录页（放宽超时，或改用 domcontentloaded 避免被某些慢资源卡死）
+            # 访问登录页，使用 commit 级别，只要收到响应头就立即放行，不等待任何资源加载
             try:
-                page.goto(LOGIN_URL, timeout=60000, wait_until="domcontentloaded")
+                page.goto(LOGIN_URL, timeout=30000, wait_until="commit")
             except Exception as nav_err:
-                print(f"导航超时，尝试截图留证: {nav_err}")
-                page.screenshot(path=screenshot_path)
-                send_tg_message(f"打开登录页超时/异常: {str(nav_err)}", screenshot_path)
+                print(f"导航超时/异常: {nav_err}")
+                # 强制快速截图（限制5秒超时，不等待字体）
+                try:
+                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
+                    send_tg_message(f"打开登录页超时，当前页面截图如下:", screenshot_path)
+                except Exception as sc_err:
+                    send_tg_message(f"打开登录页超时，且截图失败: {str(nav_err)} | {str(sc_err)}")
                 raise nav_err
 
-            # 成功打开后立即截图发送
-            page.screenshot(path=screenshot_path)
-            send_tg_message("成功打开登录页面，准备输入账号密码...", screenshot_path)
+            # 稍微等待半秒让基础 HTML 渲染，然后立刻截图
+            page.wait_for_timeout(1000)
+            page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
+            send_tg_message("成功打开登录页面，当前页面状态:", screenshot_path)
 
             # 填写登录信息
             page.fill('//*[@id="email"]', EMAIL)
@@ -68,7 +73,7 @@ def main():
                 page.click('//*[@id="loginForm"]/button')
 
             # 检查是否成功登录并进入服务页
-            page.goto(SERVICES_URL, timeout=60000, wait_until="domcontentloaded")
+            page.goto(SERVICES_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
 
             # 获取到期日期文本，例如 "Renouvellement : 16/09/2026"
@@ -86,22 +91,19 @@ def main():
 
             if remaining_days <= 2:
                 print("剩余天数小于或等于2天，开始执行续期操作...")
-                # 检查并点击续期按钮
                 renew_btn = page.locator('.btn-renew.js-free-renew')
                 if renew_btn.count() > 0:
                     old_date_str = date_str
                     renew_btn.click()
                     
-                    # 等待几秒让后端处理并刷新状态
                     page.wait_for_timeout(5000)
-                    page.reload()
+                    page.reload(wait_until="domcontentloaded")
                     page.wait_for_selector('.service-status', timeout=15000)
                     
                     new_status_text = page.locator('.service-status').inner_text()
                     new_date_str = new_status_text.split(":")[-1].strip()
                     
-                    # 截图留存
-                    page.screenshot(path=screenshot_path)
+                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
 
                     if new_date_str != old_date_str:
                         msg = f"续期成功！原到期日: {old_date_str}，新到期日: {new_date_str}"
@@ -114,19 +116,19 @@ def main():
                 else:
                     msg = "未找到可用的续期按钮（可能未到时间或元素不存在）。"
                     print(msg)
-                    page.screenshot(path=screenshot_path)
+                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                     send_tg_message(msg, screenshot_path)
             else:
                 msg = f"剩余天数大于2天 ({remaining_days} 天)，暂不需要续期。当前到期日: {date_str}"
                 print(msg)
-                page.screenshot(path=screenshot_path)
+                page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                 send_tg_message(msg, screenshot_path)
 
         except Exception as e:
             error_msg = f"脚本执行过程中发生异常: {str(e)}"
             print(error_msg)
             try:
-                page.screenshot(path=screenshot_path)
+                page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                 send_tg_message(error_msg, screenshot_path)
             except:
                 send_tg_message(error_msg)
