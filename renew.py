@@ -72,7 +72,6 @@ def main():
 
         try:
             print("正在访问登录页面...")
-            send_tg_message("🌐 正在尝试打开登录页面...")
             
             try:
                 page.goto(LOGIN_URL, timeout=30000, wait_until="commit")
@@ -86,8 +85,6 @@ def main():
                 raise nav_err
 
             page.wait_for_timeout(1000)
-            page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
-            send_tg_message("✅ 成功打开登录页面，准备执行登录...", screenshot_path)
 
             # 填写登录信息
             page.fill('//*[@id="email"]', EMAIL)
