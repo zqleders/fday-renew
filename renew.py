@@ -37,21 +37,33 @@ def main():
     screenshot_path = "screenshot.png"
     
     with sync_playwright() as p:
-        # 启动无头浏览器
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        # 启动无头浏览器并加入防检测参数
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox"
+            ]
+        )
+        # 伪装成真实的桌面端 Chrome 浏览器和法语区域环境
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            locale="fr-FR",
+            timezone_id="Europe/Paris"
+        )
         page = context.new_page()
 
         try:
             print("正在访问登录页面...")
             send_tg_message("正在尝试打开登录页面...")
             
-            # 访问登录页，使用 commit 级别，只要收到响应头就立即放行，不等待任何资源加载
+            # 访问登录页，使用 commit 级别，只要收到响应头就立即放行
             try:
                 page.goto(LOGIN_URL, timeout=30000, wait_until="commit")
             except Exception as nav_err:
                 print(f"导航超时/异常: {nav_err}")
-                # 强制快速截图（限制5秒超时，不等待字体）
                 try:
                     page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                     send_tg_message(f"打开登录页超时，当前页面截图如下:", screenshot_path)
@@ -59,7 +71,7 @@ def main():
                     send_tg_message(f"打开登录页超时，且截图失败: {str(nav_err)} | {str(sc_err)}")
                 raise nav_err
 
-            # 稍微等待半秒让基础 HTML 渲染，然后立刻截图
+            # 等待基础 HTML 渲染后截图
             page.wait_for_timeout(1000)
             page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
             send_tg_message("成功打开登录页面，当前页面状态:", screenshot_path)
