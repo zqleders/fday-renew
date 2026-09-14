@@ -12,41 +12,41 @@ PASSWORD = os.environ.get("FRIDAY_PASSWORD")
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
+# 截图发送开关：true 表示发送截图，false 表示不发送截图
+SEND_PIC = False
+
 def send_tg_message(text, image_path=None):
-    """发送带 [fday] 前缀的 Telegram 消息，若图片发送超时或失败则自动降级为纯文本"""
-    formatted_text = f"[fday] {text}"
+    """发送带 [fday] 前缀的 Telegram 消息，根据代码中的 SEND_PIC 开关决定是否附带截图"""
+    formatted_text = f"[fday]\n{text}"
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
-        print(f"Telegram 配置缺失，跳过发送: {formatted_text}")
+        print(f"Telegram 配置缺失，跳过发送: {text}")
         return
 
     success = False
-    try:
-        # 尝试发送带图片的通知
-        if image_path and os.path.exists(image_path):
+    # 只有当 SEND_PIC 为 True、图片路径有效且文件存在时，才尝试发送带图消息
+    if SEND_PIC and image_path and os.path.exists(image_path):
+        try:
             url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendPhoto"
             with open(image_path, "rb") as photo:
                 payload = {"chat_id": TG_CHAT_ID, "caption": formatted_text}
                 files = {"photo": photo}
-                # 将超时时间稍微放宽到 45 秒
                 response = requests.post(url, data=payload, files=files, timeout=45)
                 if response.status_code == 200:
                     success = True
                 else:
                     print(f"Telegram 返回非 200 状态码: {response.text}")
-    except Exception as e:
-        print(f"发送带图 Telegram 消息超时或失败: {e}，正在尝试降级为纯文本...")
+        except Exception as e:
+            print(f"发送带图 Telegram 消息超时或失败: {e}，正在尝试降级为纯文本...")
 
-    # 如果没有图片，或者图片发送失败，则自动降级发送纯文本消息
+    # 如果开关关闭，或者图片发送失败，则发送纯文本通知
     if not success:
         try:
             url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-            # 如果是因为图片超时失败，在文本后加个小提示
-            text_to_send = formatted_text if not image_path else f"{formatted_text} (注: 截图发送超时)"
-            payload = {"chat_id": TG_CHAT_ID, "text": text_to_send}
+            payload = {"chat_id": TG_CHAT_ID, "text": formatted_text}
             requests.post(url, data=payload, timeout=30)
-            print("已成功降级发送纯文本 Telegram 通知。")
+            print("已成功发送纯文本 Telegram 通知。")
         except Exception as text_err:
-            print(f"降级发送纯文本也失败: {text_err}")
+            print(f"发送纯文本 Telegram 消息失败: {text_err}")
 
 def main():
     screenshot_path = "screenshot.png"
@@ -72,7 +72,7 @@ def main():
 
         try:
             print("正在访问登录页面...")
-            send_tg_message("正在尝试打开登录页面...")
+            send_tg_message("🌐 正在尝试打开登录页面...")
             
             try:
                 page.goto(LOGIN_URL, timeout=30000, wait_until="commit")
@@ -80,14 +80,14 @@ def main():
                 print(f"导航超时/异常: {nav_err}")
                 try:
                     page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
-                    send_tg_message(f"打开登录页超时，当前页面截图如下:", screenshot_path)
+                    send_tg_message(f"⚠️ 打开登录页超时\n━━━━━━━━━━━━━━\n错误信息: {str(nav_err)}", screenshot_path)
                 except Exception as sc_err:
-                    send_tg_message(f"打开登录页超时，且截图失败: {str(nav_err)} | {str(sc_err)}")
+                    send_tg_message(f"⚠️ 打开登录页超时，且截图失败: {str(nav_err)} | {str(sc_err)}")
                 raise nav_err
 
             page.wait_for_timeout(1000)
             page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
-            send_tg_message("成功打开登录页面，当前页面状态:", screenshot_path)
+            send_tg_message("✅ 成功打开登录页面，准备执行登录...", screenshot_path)
 
             # 填写登录信息
             page.fill('//*[@id="email"]', EMAIL)
@@ -114,6 +114,8 @@ def main():
             remaining_days = (expire_date - current_date).days
             print(f"服务器到期日期: {date_str}, 剩余天数: {remaining_days} 天")
 
+            current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
             if remaining_days <= 2:
                 print("剩余天数小于或等于2天，开始执行续期操作...")
                 renew_btn = page.locator('.btn-renew.js-free-renew')
@@ -128,29 +130,69 @@ def main():
                     new_status_text = page.locator('.service-status').inner_text()
                     new_date_str = new_status_text.split(":")[-1].strip()
                     
+                    # 重新计算新到期日的剩余天数
+                    new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y")
+                    new_remaining_days = (new_expire_date - current_date).days
+
                     page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
 
                     if new_date_str != old_date_str:
-                        msg = f"续期成功！原到期日: {old_date_str}，新到期日: {new_date_str}"
+                        msg = (
+                            f"✅ 续期成功通知\n"
+                            f"━━━━━━━━━━━━━━\n"
+                            f"🖥 服务器: Fday\n"
+                            f"🕒 续期时间: {current_time_str}\n"
+                            f"📅 新到期时间: {new_date_str}\n"
+                            f"⏳ 剩余时长: {new_remaining_days}天"
+                        )
                         print(msg)
                         send_tg_message(msg, screenshot_path)
                     else:
-                        msg = f"续期点击后日期未发生变化 ({new_date_str})，可能续期失败或还未生效。"
+                        msg = (
+                            f"⚠️ 续期状态异常\n"
+                            f"━━━━━━━━━━━━━━\n"
+                            f"🖥 服务器: Fday\n"
+                            f"🕒 检测时间: {current_time_str}\n"
+                            f"📅 当前到期日: {new_date_str}\n"
+                            f"💬 提示: 点击后日期未变，可能未生效。"
+                        )
                         print(msg)
                         send_tg_message(msg, screenshot_path)
                 else:
-                    msg = "未找到可用的续期按钮（可能未到时间或元素不存在）。"
+                    msg = (
+                        f"⚠️ 续期按钮未找到\n"
+                        f"━━━━━━━━━━━━━━\n"
+                        f"🖥 服务器: Fday\n"
+                        f"🕒 检测时间: {current_time_str}\n"
+                        f"📅 当前到期日: {date_str}\n"
+                        f"⏳ 剩余时长: {remaining_days}天"
+                    )
                     print(msg)
                     page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                     send_tg_message(msg, screenshot_path)
             else:
-                msg = f"剩余天数大于2天 ({remaining_days} 天)，暂不需要续期。当前到期日: {date_str}"
+                msg = (
+                    f"ℹ️ 服务器状态通知\n"
+                    f"━━━━━━━━━━━━━━\n"
+                    f"🖥 服务器: Fday\n"
+                    f"🕒 检测时间: {current_time_str}\n"
+                    f"📅 当前到期日: {date_str}\n"
+                    f"⏳ 剩余时长: {remaining_days}天\n"
+                    f"💬 提示: 剩余天数大于2天，暂不需要续期。"
+                )
                 print(msg)
                 page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                 send_tg_message(msg, screenshot_path)
 
         except Exception as e:
-            error_msg = f"脚本执行过程中发生异常: {str(e)}"
+            error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            error_msg = (
+                f"❌ 脚本运行异常通知\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"🖥 服务器: Fday\n"
+                f"🕒 发生时间: {error_time}\n"
+                f"🚨 错误详情: {str(e)}"
+            )
             print(error_msg)
             try:
                 page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
