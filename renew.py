@@ -44,7 +44,20 @@ def main():
 
         try:
             print("正在访问登录页面...")
-            page.goto(LOGIN_URL, timeout=60000)
+            send_tg_message("正在尝试打开登录页面...")
+            
+            # 访问登录页（放宽超时，或改用 domcontentloaded 避免被某些慢资源卡死）
+            try:
+                page.goto(LOGIN_URL, timeout=60000, wait_until="domcontentloaded")
+            except Exception as nav_err:
+                print(f"导航超时，尝试截图留证: {nav_err}")
+                page.screenshot(path=screenshot_path)
+                send_tg_message(f"打开登录页超时/异常: {str(nav_err)}", screenshot_path)
+                raise nav_err
+
+            # 成功打开后立即截图发送
+            page.screenshot(path=screenshot_path)
+            send_tg_message("成功打开登录页面，准备输入账号密码...", screenshot_path)
 
             # 填写登录信息
             page.fill('//*[@id="email"]', EMAIL)
@@ -55,7 +68,7 @@ def main():
                 page.click('//*[@id="loginForm"]/button')
 
             # 检查是否成功登录并进入服务页
-            page.goto(SERVICES_URL, timeout=60000)
+            page.goto(SERVICES_URL, timeout=60000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
 
             # 获取到期日期文本，例如 "Renouvellement : 16/09/2026"
