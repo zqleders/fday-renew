@@ -13,7 +13,7 @@ TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
 # 截图发送开关：true 表示发送截图，false 表示不发送截图
-SEND_PIC = True
+SEND_PIC = False
 
 def send_tg_message(text, image_path=None):
     """发送带 [fday] 前缀的 Telegram 消息，根据代码中的 SEND_PIC 开关决定是否附带截图"""
@@ -23,7 +23,6 @@ def send_tg_message(text, image_path=None):
         return
 
     success = False
-    # 只有当 SEND_PIC 为 True、图片路径有效且文件存在时，才尝试发送带图消息
     if SEND_PIC and image_path and os.path.exists(image_path):
         try:
             url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendPhoto"
@@ -38,7 +37,6 @@ def send_tg_message(text, image_path=None):
         except Exception as e:
             print(f"发送带图 Telegram 消息超时或失败: {e}，正在尝试降级为纯文本...")
 
-    # 如果开关关闭，或者图片发送失败，则发送纯文本通知
     if not success:
         try:
             url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
@@ -52,7 +50,6 @@ def main():
     screenshot_path = "screenshot.png"
     
     with sync_playwright() as p:
-        # 启动无头浏览器并加入防检测参数
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -61,7 +58,6 @@ def main():
                 "--disable-setuid-sandbox"
             ]
         )
-        # 伪装成真实的桌面端 Chrome 浏览器和法语区域环境
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -90,7 +86,6 @@ def main():
             page.fill('//*[@id="email"]', EMAIL)
             page.fill('//*[@id="password"]', PASSWORD)
             
-            # 点击登录按钮并等待页面跳转
             with page.expect_navigation(timeout=30000):
                 page.click('//*[@id="loginForm"]/button')
 
@@ -98,28 +93,26 @@ def main():
             page.goto(SERVICES_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
 
-            # 获取到期日期文本，例如 "Renouvellement : 16/09/2026"
             status_text = page.locator('.service-status').inner_text()
             print(f"当前状态文本: {status_text}")
 
-            # 解析日期
             date_str = status_text.split(":")[-1].strip()
             expire_date = datetime.strptime(date_str, "%d/%m/%Y")
             current_date = datetime.now()
             
-            # 计算剩余天数
             remaining_days = (expire_date - current_date).days
             print(f"服务器到期日期: {date_str}, 剩余天数: {remaining_days} 天")
 
             current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             if remaining_days <= 2:
-                print("剩余天数小于或等于2天，开始执行续期操作...")
+                print("剩余天数小于或等于2天，检查续期按钮状态...")
                 
-                # 改用包含 "Renouveller gratuitement" 的文本来定位按钮（忽略后面的天数变化）
-                renew_btn = page.locator('button:has-text("Renouveller gratuitement")')
+                # 寻找可点击的激活状态续期按钮（排除 is-disabled）
+                renew_btn = page.locator('button.btn-renew.js-free-renew:not([disabled])')
                 
                 if renew_btn.count() > 0:
+                    print("发现可用的续期按钮，执行续期...")
                     old_date_str = date_str
                     renew_btn.click()
                     
@@ -130,7 +123,6 @@ def main():
                     new_status_text = page.locator('.service-status').inner_text()
                     new_date_str = new_status_text.split(":")[-1].strip()
                     
-                    # 重新计算新到期日的剩余天数
                     new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y")
                     new_remaining_days = (new_expire_date - current_date).days
 
@@ -159,13 +151,15 @@ def main():
                         print(msg)
                         send_tg_message(msg, screenshot_path)
                 else:
+                    # 按钮存在但处于 disabled / is-disabled 状态
                     msg = (
-                        f"⚠️ 续期按钮未找到\n"
+                        f"⏳ 续期按钮暂未激活\n"
                         f"━━━━━━━━━━━━━━\n"
                         f"🖥 服务器: Fday\n"
                         f"🕒 检测时间: {current_time_str}\n"
                         f"📅 当前到期日: {date_str}\n"
-                        f"⏳ 剩余时长: {remaining_days}天"
+                        f"⏳ 剩余时长: {remaining_days}天\n"
+                        f"💬 提示: 虽已到最后2天，但官方按钮尚未开放点按（可能需再等几小时）。"
                     )
                     print(msg)
                     page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
