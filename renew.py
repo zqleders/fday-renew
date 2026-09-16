@@ -13,7 +13,7 @@ TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
 # 截图发送开关：true 表示发送截图，false 表示不发送截图
-SEND_PIC = False
+SEND_PIC = True
 
 def send_tg_message(text, image_path=None):
     """发送带 [fday] 前缀的 Telegram 消息，根据代码中的 SEND_PIC 开关决定是否附带截图"""
