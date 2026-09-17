@@ -120,7 +120,7 @@ def main():
                 renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]')
                 
                 if renew_btn.count() > 0:
-                    print("发现可用的续期按钮，准备标红并执行点击...")
+                    print("发现可用的续期按钮，准备加红框并执行点击...")
                     old_date_str = date_str
                     
                     try:
@@ -128,10 +128,10 @@ def main():
                         btn_html = renew_btn.evaluate("el => el.outerHTML")
                         print(f"定位到的按钮 HTML: {btn_html}")
                         
-                        # 给按钮加上醒目的红框和黄底
-                        renew_btn.evaluate("el => { el.style.border = '4px solid red'; el.style.backgroundColor = 'yellow'; }")
+                        # 【已修改】：仅加上 4px 红色粗边框，不改变背景色，保留文字清晰度
+                        renew_btn.evaluate("el => { el.style.border = '4px solid red'; }")
                         
-                        # 1. 截图 1：【点击前 - 目标确认图】
+                        # 1. 截图 1：【点击前 - 目标确认图】（仅红框）
                         page.screenshot(path=screenshot_target, timeout=5000, animations="disabled")
                         
                         # 滚动到可视区域并执行点击（标准点击 + JS 点击双管齐下）
@@ -142,11 +142,11 @@ def main():
                     except Exception as e:
                         print(f"标红或点击异常: {e}")
 
-                    # 2. 截图 2：【点击后 - 即时现场图】（立刻截取，不管页面有没有刷新，用来排查点完后发生了什么）
+                    # 2. 截图 2：【点击后 - 即时现场图】
                     page.screenshot(path=screenshot_clicked, timeout=5000, animations="disabled")
                     
-                    # 发送前两张排查图：先发定位图，再发点击后即时图
-                    send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（红框黄底）", screenshot_target)
+                    # 发送前两张排查图
+                    send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（仅红框）", screenshot_target)
                     send_tg_message("🔍 【排查步骤 2/2】刚执行完点击动作的即时画面", screenshot_clicked)
 
                     # 等待并刷新检查结果
