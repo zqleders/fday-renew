@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 import requests
@@ -49,6 +50,7 @@ def send_tg_message(text, image_path=None):
 def main():
     screenshot_target = "screenshot_target.png"
     screenshot_clicked = "screenshot_clicked.png"
+    screenshot_cf = "screenshot_cf.png"
     screenshot_final = "screenshot_final.png"
     
     with sync_playwright() as p:
@@ -70,9 +72,6 @@ def main():
 
         # 自动处理网页弹出的确认框（confirm/alert）
         page.on("dialog", lambda dialog: (print(f"检测到网页弹窗: {dialog.message}，已自动点击确定"), dialog.accept()))
-
-        # 监听网络请求
-        page.on("request", lambda req: print(f"网络请求: {req.method} {req.url}") if "renew" in req.url or "action" in req.url else None)
 
         try:
             print("正在访问登录页面...")
@@ -128,7 +127,7 @@ def main():
                         btn_html = renew_btn.evaluate("el => el.outerHTML")
                         print(f"定位到的按钮 HTML: {btn_html}")
                         
-                        # 【已修改】：仅加上 4px 红色粗边框，不改变背景色，保留文字清晰度
+                        # 仅加上 4px 红色粗边框
                         renew_btn.evaluate("el => { el.style.border = '4px solid red'; }")
                         
                         # 1. 截图 1：【点击前 - 目标确认图】（仅红框）
@@ -149,6 +148,52 @@ def main():
                     send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（仅红框）", screenshot_target)
                     send_tg_message("🔍 【排查步骤 2/2】刚执行完点击动作的即时画面", screenshot_clicked)
 
+                    # ==========================================
+                    # 【新增】处理 Cloudflare Turnstile 人机验证
+                    # ==========================================
+                    print("[INFO] 正在寻找并处理 CF Turnstile iframe 验证码...")
+                    time.sleep(2) # 等待人机验证弹窗加载
+
+                    iframe_selector = 'iframe[src*="challenges.cloudflare.com"]'
+                    iframe_element = page.locator(iframe_selector)
+
+                    if iframe_element.count() > 0:
+                        try:
+                            # Playwright 中获取 iframe 内部的 frame 对象
+                            frame = page.frame_locator(iframe_selector)
+                            time.sleep(1)
+
+                            # 尝试在 iframe 内部寻找复选框并打勾
+                            checkbox = frame.locator('input[type="checkbox"]')
+                            if checkbox.count() > 0:
+                                checkbox.click(force=True)
+                            else:
+                                # 如果没有找到标准 checkbox，尝试点击 iframe 内部的 body 触发
+                                frame.locator('body').click(force=True)
+
+                            print("[INFO] 已在 iframe 内触发点击，等待验证结果...")
+
+                            verified = False
+                            for _ in range(10):
+                                time.sleep(1)
+                                page_text = page.content()
+                                if any(term in page_text for term in ["成功", "Success", "Successful"]):
+                                    verified = True
+                                    print("[INFO] CF 验证成功！已检测到成功标识。")
+                                    break
+
+                            if not verified:
+                                print("[WARNING] 未在规定时间内检测到验证成功的文本标识，继续尝试主流程...")
+
+                        except Exception as cf_err:
+                            print(f"[ERROR] 处理 iframe 内 CF 验证时出错: {cf_err}")
+                    else:
+                        print("[INFO] 未找到特定的 Cloudflare iframe 验证码。")
+
+                    # 验证处理完毕后截图存档
+                    page.screenshot(path=screenshot_cf, timeout=5000, animations="disabled")
+                    send_tg_message("🛡️ 【CF验证处理完毕】当前页面状态", screenshot_cf)
+
                     # 等待并刷新检查结果
                     page.wait_for_timeout(5000)
                     page.reload(wait_until="domcontentloaded")
@@ -165,7 +210,7 @@ def main():
 
                     if new_date_str != old_date_str:
                         msg = (
-                            f"✅ 续期成功通知\n"
+                            f"✅ 续期成功通知 (验证码通过)\n"
                             f"━━━━━━━━━━━━━━\n"
                             f"🖥 服务器: Fday\n"
                             f"🕒 续期时间: {current_time_str}\n"
@@ -176,12 +221,12 @@ def main():
                         send_tg_message(msg, screenshot_final)
                     else:
                         msg = (
-                            f"⚠️ 续期状态异常 (点击后日期未变)\n"
+                            f"⚠️ 续期状态异常 (过完验证后日期未变)\n"
                             f"━━━━━━━━━━━━━━\n"
                             f"🖥 服务器: Fday\n"
                             f"🕒 检测时间: {current_time_str}\n"
                             f"📅 当前到期日: {new_date_str}\n"
-                            f"💬 提示: 按钮已找到并点击，但后端未接受续期请求。"
+                            f"💬 提示: 已处理人机验证，但后端未接受续期请求。"
                         )
                         print(msg)
                         send_tg_message(msg, screenshot_final)
