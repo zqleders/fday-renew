@@ -48,6 +48,7 @@ def send_tg_message(text, image_path=None):
 
 def main():
     screenshot_before = "screenshot_before.png"
+    screenshot_clicked = "screenshot_clicked.png"
     screenshot_after = "screenshot_after.png"
     
     with sync_playwright() as p:
@@ -94,7 +95,7 @@ def main():
             page.goto(SERVICES_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
 
-            # 在操作前先截一张图存档
+            # 操作前截图
             page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
 
             status_text = page.locator('.service-status').inner_text()
@@ -116,13 +117,27 @@ def main():
                 renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]')
                 
                 if renew_btn.count() > 0:
-                    print("发现可用的续期按钮，执行续期...")
+                    print("发现可用的续期按钮，准备执行点击...")
                     old_date_str = date_str
+                    
+                    try:
+                        btn_html = renew_btn.evaluate("el => el.outerHTML")
+                        print(f"定位到的按钮 HTML: {btn_html}")
+                    except Exception as html_err:
+                        print(f"获取按钮 HTML 异常: {html_err}")
                     
                     # 滚动到可视区域并强制点击
                     renew_btn.scroll_into_view_if_needed()
                     renew_btn.wait_for(state="visible", timeout=10000)
-                    renew_btn.click(force=True)
+                    
+                    try:
+                        renew_btn.click(force=True)
+                        print("点击动作已执行")
+                    except Exception as click_ex:
+                        print(f"点击时发生异常: {click_ex}")
+
+                    # 立即截取点击后的即时画面（用来排查是否有弹窗或未响应）
+                    page.screenshot(path=screenshot_clicked, timeout=5000, animations="disabled")
                     
                     page.wait_for_timeout(5000)
                     page.reload(wait_until="domcontentloaded")
@@ -134,7 +149,7 @@ def main():
                     new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
                     new_remaining_days = (new_expire_date - current_date).days
 
-                    # 操作后截一张图
+                    # 操作后最终截图
                     page.screenshot(path=screenshot_after, timeout=5000, animations="disabled")
 
                     if new_date_str != old_date_str:
@@ -150,15 +165,15 @@ def main():
                         send_tg_message(msg, screenshot_after)
                     else:
                         msg = (
-                            f"⚠️ 续期状态异常\n"
+                            f"⚠️ 续期状态异常 (点击后无变化)\n"
                             f"━━━━━━━━━━━━━━\n"
                             f"🖥 服务器: Fday\n"
                             f"🕒 检测时间: {current_time_str}\n"
                             f"📅 当前到期日: {new_date_str}\n"
-                            f"💬 提示: 点击后日期未变，可能未生效。"
+                            f"💬 提示: 点击后日期未变，已附上【点击即时截图】以便排查。"
                         )
                         print(msg)
-                        send_tg_message(msg, screenshot_after)
+                        send_tg_message(msg, screenshot_clicked)
                 else:
                     msg = (
                         f"⏳ 续期按钮暂未激活\n"
@@ -167,7 +182,7 @@ def main():
                         f"🕒 检测时间: {current_time_str}\n"
                         f"📅 当前到期日: {date_str}\n"
                         f"⏳ 剩余时长: {remaining_days}天\n"
-                        f"💬 提示: 虽已到最后2天，但官方续期按钮尚未开放点按。"
+                        f"💬 提示: 未检测到符合条件的续期按钮。"
                     )
                     print(msg)
                     send_tg_message(msg, screenshot_before)
