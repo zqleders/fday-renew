@@ -95,7 +95,7 @@ def main():
             page.goto(SERVICES_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
 
-            # 操作前截图
+            # 初始状态截图
             page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
 
             status_text = page.locator('.service-status').inner_text()
@@ -117,14 +117,21 @@ def main():
                 renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]')
                 
                 if renew_btn.count() > 0:
-                    print("发现可用的续期按钮，准备执行点击...")
+                    print("发现可用的续期按钮，准备标红并执行点击...")
                     old_date_str = date_str
                     
                     try:
+                        # 打印按钮 HTML
                         btn_html = renew_btn.evaluate("el => el.outerHTML")
                         print(f"定位到的按钮 HTML: {btn_html}")
-                    except Exception as html_err:
-                        print(f"获取按钮 HTML 异常: {html_err}")
+                        
+                        # 【核心改动】：通过 JS 给找到的按钮加上醒目的红框和黄底，方便截图中确认
+                        renew_btn.evaluate("el => { el.style.border = '4px solid red'; el.style.backgroundColor = 'yellow'; }")
+                        
+                        # 重新截取带红框的图并覆盖保存，确保 Telegram 能看到红框
+                        page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
+                    except Exception as e:
+                        print(f"标红或打印按钮异常: {e}")
                     
                     # 滚动到可视区域并强制点击
                     renew_btn.scroll_into_view_if_needed()
@@ -136,7 +143,7 @@ def main():
                     except Exception as click_ex:
                         print(f"点击时发生异常: {click_ex}")
 
-                    # 立即截取点击后的即时画面（用来排查是否有弹窗或未响应）
+                    # 立即截取点击后的画面
                     page.screenshot(path=screenshot_clicked, timeout=5000, animations="disabled")
                     
                     page.wait_for_timeout(5000)
@@ -154,7 +161,7 @@ def main():
 
                     if new_date_str != old_date_str:
                         msg = (
-                            f"✅ 续期成功通知\n"
+                            f"✅ 续期成功通知 (已标红定位)\n"
                             f"━━━━━━━━━━━━━━\n"
                             f"🖥 服务器: Fday\n"
                             f"🕒 续期时间: {current_time_str}\n"
@@ -170,7 +177,7 @@ def main():
                             f"🖥 服务器: Fday\n"
                             f"🕒 检测时间: {current_time_str}\n"
                             f"📅 当前到期日: {new_date_str}\n"
-                            f"💬 提示: 点击后日期未变，已附上【点击即时截图】以便排查。"
+                            f"💬 提示: 按钮已标红，但点击后日期未变。"
                         )
                         print(msg)
                         send_tg_message(msg, screenshot_clicked)
@@ -182,7 +189,7 @@ def main():
                         f"🕒 检测时间: {current_time_str}\n"
                         f"📅 当前到期日: {date_str}\n"
                         f"⏳ 剩余时长: {remaining_days}天\n"
-                        f"💬 提示: 未检测到符合条件的续期按钮。"
+                        f"💬 提示: 未检测到符合条件的续期按钮（无红框说明未找到）。"
                     )
                     print(msg)
                     send_tg_message(msg, screenshot_before)
