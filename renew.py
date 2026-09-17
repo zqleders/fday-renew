@@ -12,7 +12,7 @@ PASSWORD = os.environ.get("FRIDAY_PASSWORD")
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
-# 截图发送开关：True 表示发送截图，False 表示不发送截图
+# 截图发送开关：true 表示发送截图，false 表示不发送截图
 SEND_PIC = True
 
 def send_tg_message(text, image_path=None):
@@ -108,7 +108,7 @@ def main():
             if remaining_days <= 2:
                 print("剩余天数小于或等于2天，检查续期按钮状态...")
                 
-                # 使用组合类名和 data-uuid 精准定位可用的续期按钮，避免匹配到其他操作按钮
+                # 使用组合类名和 data-uuid 精准定位可用的续期按钮
                 renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]')
                 
                 if renew_btn.count() > 0:
@@ -151,6 +151,7 @@ def main():
                         print(msg)
                         send_tg_message(msg, screenshot_path)
                 else:
+                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                     msg = (
                         f"⏳ 续期按钮暂未激活\n"
                         f"━━━━━━━━━━━━━━\n"
@@ -161,9 +162,9 @@ def main():
                         f"💬 提示: 虽已到最后2天，但官方续期按钮尚未开放点按。"
                     )
                     print(msg)
-                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                     send_tg_message(msg, screenshot_path)
             else:
+                page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                 msg = (
                     f"ℹ️ 服务器状态通知\n"
                     f"━━━━━━━━━━━━━━\n"
@@ -174,7 +175,6 @@ def main():
                     f"💬 提示: 剩余天数大于2天，暂不需要续期。"
                 )
                 print(msg)
-                page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                 send_tg_message(msg, screenshot_path)
 
         except Exception as e:
