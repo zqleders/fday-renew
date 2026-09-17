@@ -47,7 +47,8 @@ def send_tg_message(text, image_path=None):
             print(f"发送纯文本 Telegram 消息失败: {text_err}")
 
 def main():
-    screenshot_path = "screenshot.png"
+    screenshot_before = "screenshot_before.png"
+    screenshot_after = "screenshot_after.png"
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -74,8 +75,8 @@ def main():
             except Exception as nav_err:
                 print(f"导航超时/异常: {nav_err}")
                 try:
-                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
-                    send_tg_message(f"⚠️ 打开登录页超时\n━━━━━━━━━━━━━━\n错误信息: {str(nav_err)}", screenshot_path)
+                    page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
+                    send_tg_message(f"⚠️ 打开登录页超时\n━━━━━━━━━━━━━━\n错误信息: {str(nav_err)}", screenshot_before)
                 except Exception as sc_err:
                     send_tg_message(f"⚠️ 打开登录页超时，且截图失败: {str(nav_err)} | {str(sc_err)}")
                 raise nav_err
@@ -92,6 +93,9 @@ def main():
             # 检查是否成功登录并进入服务页
             page.goto(SERVICES_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
+
+            # 在操作前先截一张图存档
+            page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
 
             status_text = page.locator('.service-status').inner_text()
             print(f"当前状态文本: {status_text}")
@@ -114,7 +118,11 @@ def main():
                 if renew_btn.count() > 0:
                     print("发现可用的续期按钮，执行续期...")
                     old_date_str = date_str
-                    renew_btn.click()
+                    
+                    # 滚动到可视区域并强制点击
+                    renew_btn.scroll_into_view_if_needed()
+                    renew_btn.wait_for(state="visible", timeout=10000)
+                    renew_btn.click(force=True)
                     
                     page.wait_for_timeout(5000)
                     page.reload(wait_until="domcontentloaded")
@@ -126,7 +134,8 @@ def main():
                     new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
                     new_remaining_days = (new_expire_date - current_date).days
 
-                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
+                    # 操作后截一张图
+                    page.screenshot(path=screenshot_after, timeout=5000, animations="disabled")
 
                     if new_date_str != old_date_str:
                         msg = (
@@ -138,7 +147,7 @@ def main():
                             f"⏳ 剩余时长: {new_remaining_days}天"
                         )
                         print(msg)
-                        send_tg_message(msg, screenshot_path)
+                        send_tg_message(msg, screenshot_after)
                     else:
                         msg = (
                             f"⚠️ 续期状态异常\n"
@@ -149,9 +158,8 @@ def main():
                             f"💬 提示: 点击后日期未变，可能未生效。"
                         )
                         print(msg)
-                        send_tg_message(msg, screenshot_path)
+                        send_tg_message(msg, screenshot_after)
                 else:
-                    page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                     msg = (
                         f"⏳ 续期按钮暂未激活\n"
                         f"━━━━━━━━━━━━━━\n"
@@ -162,9 +170,8 @@ def main():
                         f"💬 提示: 虽已到最后2天，但官方续期按钮尚未开放点按。"
                     )
                     print(msg)
-                    send_tg_message(msg, screenshot_path)
+                    send_tg_message(msg, screenshot_before)
             else:
-                page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
                 msg = (
                     f"ℹ️ 服务器状态通知\n"
                     f"━━━━━━━━━━━━━━\n"
@@ -175,7 +182,7 @@ def main():
                     f"💬 提示: 剩余天数大于2天，暂不需要续期。"
                 )
                 print(msg)
-                send_tg_message(msg, screenshot_path)
+                send_tg_message(msg, screenshot_before)
 
         except Exception as e:
             error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -188,8 +195,9 @@ def main():
             )
             print(error_msg)
             try:
-                page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
-                send_tg_message(error_msg, screenshot_path)
+                error_screenshot = "screenshot_error.png"
+                page.screenshot(path=error_screenshot, timeout=5000, animations="disabled")
+                send_tg_message(error_msg, error_screenshot)
             except:
                 send_tg_message(error_msg)
             sys.exit(1)
