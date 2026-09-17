@@ -47,9 +47,9 @@ def send_tg_message(text, image_path=None):
             print(f"发送纯文本 Telegram 消息失败: {text_err}")
 
 def main():
-    screenshot_before = "screenshot_before.png"
+    screenshot_target = "screenshot_target.png"
     screenshot_clicked = "screenshot_clicked.png"
-    screenshot_after = "screenshot_after.png"
+    screenshot_final = "screenshot_final.png"
     
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -68,6 +68,12 @@ def main():
         )
         page = context.new_page()
 
+        # 自动处理网页弹出的确认框（confirm/alert）
+        page.on("dialog", lambda dialog: (print(f"检测到网页弹窗: {dialog.message}，已自动点击确定"), dialog.accept()))
+
+        # 监听网络请求
+        page.on("request", lambda req: print(f"网络请求: {req.method} {req.url}") if "renew" in req.url or "action" in req.url else None)
+
         try:
             print("正在访问登录页面...")
             
@@ -76,8 +82,8 @@ def main():
             except Exception as nav_err:
                 print(f"导航超时/异常: {nav_err}")
                 try:
-                    page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
-                    send_tg_message(f"⚠️ 打开登录页超时\n━━━━━━━━━━━━━━\n错误信息: {str(nav_err)}", screenshot_before)
+                    page.screenshot(path=screenshot_target, timeout=5000, animations="disabled")
+                    send_tg_message(f"⚠️ 打开登录页超时\n━━━━━━━━━━━━━━\n错误信息: {str(nav_err)}", screenshot_target)
                 except Exception as sc_err:
                     send_tg_message(f"⚠️ 打开登录页超时，且截图失败: {str(nav_err)} | {str(sc_err)}")
                 raise nav_err
@@ -94,9 +100,6 @@ def main():
             # 检查是否成功登录并进入服务页
             page.goto(SERVICES_URL, timeout=30000, wait_until="domcontentloaded")
             page.wait_for_selector('.service-status', timeout=15000)
-
-            # 初始状态截图
-            page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
 
             status_text = page.locator('.service-status').inner_text()
             print(f"当前状态文本: {status_text}")
@@ -125,27 +128,28 @@ def main():
                         btn_html = renew_btn.evaluate("el => el.outerHTML")
                         print(f"定位到的按钮 HTML: {btn_html}")
                         
-                        # 【核心改动】：通过 JS 给找到的按钮加上醒目的红框和黄底，方便截图中确认
+                        # 给按钮加上醒目的红框和黄底
                         renew_btn.evaluate("el => { el.style.border = '4px solid red'; el.style.backgroundColor = 'yellow'; }")
                         
-                        # 重新截取带红框的图并覆盖保存，确保 Telegram 能看到红框
-                        page.screenshot(path=screenshot_before, timeout=5000, animations="disabled")
-                    except Exception as e:
-                        print(f"标红或打印按钮异常: {e}")
-                    
-                    # 滚动到可视区域并强制点击
-                    renew_btn.scroll_into_view_if_needed()
-                    renew_btn.wait_for(state="visible", timeout=10000)
-                    
-                    try:
+                        # 1. 截图 1：【点击前 - 目标确认图】
+                        page.screenshot(path=screenshot_target, timeout=5000, animations="disabled")
+                        
+                        # 滚动到可视区域并执行点击（标准点击 + JS 点击双管齐下）
+                        renew_btn.scroll_into_view_if_needed()
                         renew_btn.click(force=True)
+                        renew_btn.evaluate("el => el.click()")
                         print("点击动作已执行")
-                    except Exception as click_ex:
-                        print(f"点击时发生异常: {click_ex}")
+                    except Exception as e:
+                        print(f"标红或点击异常: {e}")
 
-                    # 立即截取点击后的画面
+                    # 2. 截图 2：【点击后 - 即时现场图】（立刻截取，不管页面有没有刷新，用来排查点完后发生了什么）
                     page.screenshot(path=screenshot_clicked, timeout=5000, animations="disabled")
                     
+                    # 发送前两张排查图：先发定位图，再发点击后即时图
+                    send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（红框黄底）", screenshot_target)
+                    send_tg_message("🔍 【排查步骤 2/2】刚执行完点击动作的即时画面", screenshot_clicked)
+
+                    # 等待并刷新检查结果
                     page.wait_for_timeout(5000)
                     page.reload(wait_until="domcontentloaded")
                     page.wait_for_selector('.service-status', timeout=15000)
@@ -156,12 +160,12 @@ def main():
                     new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
                     new_remaining_days = (new_expire_date - current_date).days
 
-                    # 操作后最终截图
-                    page.screenshot(path=screenshot_after, timeout=5000, animations="disabled")
+                    # 最终状态截图
+                    page.screenshot(path=screenshot_final, timeout=5000, animations="disabled")
 
                     if new_date_str != old_date_str:
                         msg = (
-                            f"✅ 续期成功通知 (已标红定位)\n"
+                            f"✅ 续期成功通知\n"
                             f"━━━━━━━━━━━━━━\n"
                             f"🖥 服务器: Fday\n"
                             f"🕒 续期时间: {current_time_str}\n"
@@ -169,18 +173,18 @@ def main():
                             f"⏳ 剩余时长: {new_remaining_days}天"
                         )
                         print(msg)
-                        send_tg_message(msg, screenshot_after)
+                        send_tg_message(msg, screenshot_final)
                     else:
                         msg = (
-                            f"⚠️ 续期状态异常 (点击后无变化)\n"
+                            f"⚠️ 续期状态异常 (点击后日期未变)\n"
                             f"━━━━━━━━━━━━━━\n"
                             f"🖥 服务器: Fday\n"
                             f"🕒 检测时间: {current_time_str}\n"
                             f"📅 当前到期日: {new_date_str}\n"
-                            f"💬 提示: 按钮已标红，但点击后日期未变。"
+                            f"💬 提示: 按钮已找到并点击，但后端未接受续期请求。"
                         )
                         print(msg)
-                        send_tg_message(msg, screenshot_clicked)
+                        send_tg_message(msg, screenshot_final)
                 else:
                     msg = (
                         f"⏳ 续期按钮暂未激活\n"
@@ -189,10 +193,10 @@ def main():
                         f"🕒 检测时间: {current_time_str}\n"
                         f"📅 当前到期日: {date_str}\n"
                         f"⏳ 剩余时长: {remaining_days}天\n"
-                        f"💬 提示: 未检测到符合条件的续期按钮（无红框说明未找到）。"
+                        f"💬 提示: 未检测到符合条件的续期按钮。"
                     )
                     print(msg)
-                    send_tg_message(msg, screenshot_before)
+                    send_tg_message(msg, screenshot_target)
             else:
                 msg = (
                     f"ℹ️ 服务器状态通知\n"
@@ -204,7 +208,7 @@ def main():
                     f"💬 提示: 剩余天数大于2天，暂不需要续期。"
                 )
                 print(msg)
-                send_tg_message(msg, screenshot_before)
+                send_tg_message(msg, screenshot_target)
 
         except Exception as e:
             error_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
