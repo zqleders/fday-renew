@@ -98,7 +98,7 @@ def main():
 
             date_str = status_text.split(":")[-1].strip()
             expire_date = datetime.strptime(date_str, "%d/%m/%Y").date()
-            current_date = datetime.now().date() # 抹除时分秒，仅对比日期，确保计算准确
+            current_date = datetime.now().date()
             
             remaining_days = (expire_date - current_date).days
             print(f"服务器到期日期: {date_str}, 剩余天数: {remaining_days} 天")
@@ -108,8 +108,8 @@ def main():
             if remaining_days <= 2:
                 print("剩余天数小于或等于2天，检查续期按钮状态...")
                 
-                # 使用 data-uuid 特征判断和定位可用的续期按钮
-                renew_btn = page.locator('button[data-uuid]')
+                # 使用组合类名和 data-uuid 精准定位可用的续期按钮，避免匹配到其他操作按钮
+                renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]')
                 
                 if renew_btn.count() > 0:
                     print("发现可用的续期按钮，执行续期...")
@@ -158,7 +158,7 @@ def main():
                         f"🕒 检测时间: {current_time_str}\n"
                         f"📅 当前到期日: {date_str}\n"
                         f"⏳ 剩余时长: {remaining_days}天\n"
-                        f"💬 提示: 虽已到最后2天，但官方带有uuid的按钮尚未开放点按。"
+                        f"💬 提示: 虽已到最后2天，但官方续期按钮尚未开放点按。"
                     )
                     print(msg)
                     page.screenshot(path=screenshot_path, timeout=5000, animations="disabled")
