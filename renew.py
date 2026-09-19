@@ -99,11 +99,21 @@ def main():
             # 检查是否成功登录并进入服务页
             page.goto(SERVICES_URL, timeout=30000, wait_until="load")
             
-            # 【优化】：明确等待真正可见的 .service-status 元素出现，排除隐藏的同名标签
-            status_locator = page.locator('.service-status:visible').first
-            status_locator.wait_for(state="visible", timeout=15000)
+            # 【修改点】：不再强制等待元素必须是 visible，改为只要附加在 DOM 中即可
+            page.wait_for_selector('.service-status', state="attached", timeout=15000)
 
-            status_text = status_locator.inner_text()
+            # 采用遍历所有匹配项的方式，找到包含 "Renouvellement" 或包含日期的那个文本
+            status_elements = page.locator('.service-status')
+            status_text = ""
+            for i in range(status_elements.count()):
+                txt = status_elements.nth(i).inner_text()
+                if "Renouvellement" in txt or "/" in txt:
+                    status_text = txt
+                    break
+            
+            if not status_text and status_elements.count() > 0:
+                status_text = status_elements.first.inner_text()
+
             print(f"当前状态文本: {status_text}")
 
             date_str = status_text.split(":")[-1].strip()
@@ -118,8 +128,8 @@ def main():
             if remaining_days <= 2:
                 print("剩余天数小于或等于2天，检查续期按钮状态...")
                 
-                # 使用组合类名和 data-uuid 精准定位可见的续期按钮
-                renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]:visible').first
+                # 使用组合类名和 data-uuid 精准定位续期按钮
+                renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]').first
                 
                 if renew_btn.count() > 0:
                     print("发现可用的续期按钮，准备加红框并执行点击...")
@@ -196,10 +206,20 @@ def main():
                     page.wait_for_timeout(5000)
                     page.reload(wait_until="load")
                     
-                    status_locator.wait_for(state="visible", timeout=15000)
-                    new_status_text = status_locator.inner_text()
-                    new_date_str = new_status_text.split(":")[-1].strip()
+                    page.wait_for_selector('.service-status', state="attached", timeout=15000)
                     
+                    # 重新遍历获取更新后的状态文本
+                    new_status_elements = page.locator('.service-status')
+                    new_status_text = ""
+                    for i in range(new_status_elements.count()):
+                        txt = new_status_elements.nth(i).inner_text()
+                        if "Renouvellement" in txt or "/" in txt:
+                            new_status_text = txt
+                            break
+                    if not new_status_text and new_status_elements.count() > 0:
+                        new_status_text = new_status_elements.first.inner_text()
+
+                    new_date_str = new_status_text.split(":")[-1].strip()
                     new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
                     new_remaining_days = (new_expire_date - current_date).days
 
