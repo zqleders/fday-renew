@@ -49,19 +49,17 @@ def send_tg_message(text, image_path=None):
 
 def handle_cloudflare_turnstile(page):
     """
-    1:1 映射你提供的成功项目中的过 CF 核心逻辑：
-    检查页面是否存在 cf-turnstile-response 输入框，若存在则尝试定位并点击 iframe 内部的复选框
+    纯粹针对本项目的 Cloudflare Turnstile 触发逻辑：
+    检测页面是否存在输入框，并通过 iframe 尝试交互触发验证
     """
     try:
         time.sleep(2)
-        # 探测是否存在输入框
         has_cf = page.evaluate('document.querySelector("input[name=\'cf-turnstile-response\']") !== null')
         if not has_cf:
             return True
         
-        print("[INFO] 发现 Turnstile 拦截，尝试在 iframe 内部寻找并点击验证...")
+        print("[INFO] 检测到 Turnstile 拦截，正在寻找并尝试触发验证...")
         
-        # 寻找 cloudflare 挑战 iframe
         iframe_selector = 'iframe[src*="challenges.cloudflare.com"]'
         iframe_element = page.locator(iframe_selector)
         
@@ -71,16 +69,17 @@ def handle_cloudflare_turnstile(page):
             checkbox = frame.locator('input[type="checkbox"]')
             if checkbox.count() > 0:
                 checkbox.click(force=True)
+                print("[INFO] 已成功点击 iframe 内的验证复选框")
             else:
                 frame.locator('body').click(force=True)
+                print("[INFO] 已点击 iframe 主体内容")
         else:
-            # 兼容处理：尝试直接在页面上找常见的验证框点击
-            print("[INFO] 未直接匹配到标准 iframe，尝试通用坐标或点击...")
+            print("[INFO] 当前页面未捕获到标准的挑战 iframe 元素")
             
-        time.sleep(5)
+        time.sleep(3)
         return True
     except Exception as e:
-        print(f"[WARN] 处理 CF 验证过程异常: {e}")
+        print(f"[WARN] 处理 CF 验证时发生异常: {e}")
         return False
 
 def main():
@@ -193,8 +192,8 @@ def main():
                     send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（仅红框）", screenshot_target)
                     send_tg_message("🔍 【排查步骤 2/2】刚执行完点击动作的即时画面", screenshot_clicked)
 
-                    # ── 🔥 严谨的 Cloudflare Turnstile 人机验证 3 次重试与 Token 判定逻辑 ────────────────
-                    print("🛸 激活 3 次『验证->检查 Token 是否有密文』循环机制...")
+                    # ── 🔥 严谨的 3 次重试与 Token 判定逻辑（无多余坐标干扰） ────────────────
+                    print("🛸 激活 3 次『验证 -> 检查 Token 是否有密文』循环机制...")
                     success_loaded = False
                     
                     for cf_attempt in range(3):
@@ -203,7 +202,7 @@ def main():
                             print(f"[INFO] 正在验证云盾拦截是否成功穿透 (尝试次数: {cf_attempt + 1})...")
                             time.sleep(5)
                             
-                            # 【核心判定】：根据 input 内是否有 Token 密文来严格判定是否成功打勾
+                            # 严格依据 input 内是否有 Token 密文来判定是否成功通过
                             cf_token_value = page.evaluate('''
                                 (() => {
                                     const input = document.querySelector("input[name='cf-turnstile-response']");
@@ -216,12 +215,13 @@ def main():
                                 success_loaded = True
                                 break
                             else:
-                                raise Exception("云盾输入框的 Token 依然为空，人机验证未通过")
+                                print(f"[WARN] 尝试 {cf_attempt + 1}: Token 仍为空，人机验证未通过")
                                 
                         except Exception as e:
-                            print(f"[WARN] 尝试 {cf_attempt + 1}: 未成功过验证 ({str(e)})，触发重试等待...")
-                            if cf_attempt < 2:
-                                time.sleep(5)
+                            print(f"[WARN] 尝试 {cf_attempt + 1} 异常: {e}")
+                            
+                        if cf_attempt < 2:
+                            time.sleep(5)
 
                     # 验证处理完毕后截图存档
                     page.screenshot(path=screenshot_cf, timeout=5000, animations="disabled")
@@ -275,7 +275,7 @@ def main():
                             print(msg)
                             send_tg_message(msg, screenshot_final)
                     else:
-                        print("[ERROR] 经过 3 次循环重试，CF 验证仍未打勾通过（Token 为空）")
+                        print("[ERROR] 经过 3 次循环重试，CF 验证仍未通过（Token 为空）")
                         send_tg_message("❌ *续期失败*: 经过 3 次重试，CF 验证未能成功通过（Token 校验未通过）。", screenshot_cf)
                 else:
                     msg = (
