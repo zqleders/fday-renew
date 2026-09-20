@@ -130,16 +130,15 @@ def main():
             sb.driver.get(SERVICES_URL)
             time.sleep(3)
 
-            # 打印当前实际 URL 和标题，排查是否被重定向回登录页
             current_url = sb.get_current_url()
             current_title = sb.get_page_title()
             print(f"[DEBUG] 当前实际网页 URL: {current_url}")
             print(f"[DEBUG] 当前网页标题: {current_title}")
 
-            # ── 🔥 显式等待服务状态元素加载 ──
-            print("⏳ 正在等待服务状态元素渲染...")
+            # ── 🔥 优化：使用 wait_for_element_present 避免因严格可见性检查而超时 ──
+            print("⏳ 正在等待服务状态元素加载...")
             try:
-                sb.wait_for_element('.service-status', timeout=20)
+                sb.wait_for_element_present('.service-status', timeout=20)
             except Exception as wait_err:
                 print(f"[WARN] 等待 .service-status 超时: {wait_err}")
                 sb.driver.save_screenshot(str(screenshot_target))
