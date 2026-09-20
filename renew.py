@@ -49,16 +49,20 @@ def send_tg_message(text, image_path=None):
 
 def handle_cloudflare_turnstile(page):
     """
-    纯粹针对本项目的 Cloudflare Turnstile 触发逻辑：
-    检测页面是否存在输入框，并通过 iframe 尝试交互触发验证
+    严谨的 Cloudflare Turnstile 验证处理逻辑：
+    1. 检查页面是否存在 cf-turnstile-response 输入框
+    2. 寻找 challenges.cloudflare.com 的 iframe
+    3. 在 iframe 内部精准判断是否存在 checkbox 元素
+    4. 只有当明确找到了该 checkbox 元素时，才对其进行点击打勾
     """
     try:
         time.sleep(2)
         has_cf = page.evaluate('document.querySelector("input[name=\'cf-turnstile-response\']") !== null')
         if not has_cf:
+            print("[INFO] 当前页面未检测到 cf-turnstile-response 输入框，无需处理验证。")
             return True
         
-        print("[INFO] 检测到 Turnstile 拦截，正在寻找并尝试触发验证...")
+        print("[INFO] 检测到 Cloudflare 验证输入框，正在搜寻验证 iframe...")
         
         iframe_selector = 'iframe[src*="challenges.cloudflare.com"]'
         iframe_element = page.locator(iframe_selector)
@@ -66,15 +70,19 @@ def handle_cloudflare_turnstile(page):
         if iframe_element.count() > 0:
             frame = page.frame_locator(iframe_selector)
             time.sleep(1)
+            
+            # 严格判断：在 iframe 内部寻找人机验证的 CHECKBOX 元素
             checkbox = frame.locator('input[type="checkbox"]')
-            if checkbox.count() > 0:
-                checkbox.click(force=True)
-                print("[INFO] 已成功点击 iframe 内的验证复选框")
+            checkbox_count = checkbox.count()
+            
+            if checkbox_count > 0:
+                print(f"[INFO] 成功找到了 CF 验证的 Checkbox 元素 (数量: {checkbox_count})，准备执行打勾点击...")
+                checkbox.first.click(force=True)
+                print("[INFO] 已成功点击 CF 验证的 Checkbox")
             else:
-                frame.locator('body').click(force=True)
-                print("[INFO] 已点击 iframe 主体内容")
+                print("[INFO] 虽然找到了 CF 的 iframe，但未在其中检测到 input[type='checkbox'] 元素")
         else:
-            print("[INFO] 当前页面未捕获到标准的挑战 iframe 元素")
+            print("[INFO] 未找到匹配的 challenges.cloudflare.com iframe 元素")
             
         time.sleep(3)
         return True
@@ -134,10 +142,8 @@ def main():
             # 检查是否成功登录并进入服务页
             page.goto(SERVICES_URL, timeout=30000, wait_until="load")
             
-            # 只要元素附加在 DOM 中即可
             page.wait_for_selector('.service-status', state="attached", timeout=15000)
 
-            # 采用遍历所有匹配项的方式，找到包含文本的那个元素
             status_elements = page.locator('.service-status')
             status_text = ""
             for i in range(status_elements.count()):
@@ -163,7 +169,6 @@ def main():
             if remaining_days <= 2:
                 print("剩余天数小于或等于2天，检查续期按钮状态...")
                 
-                # 使用组合类名和 data-uuid 精准定位续期按钮
                 renew_btn = page.locator('button.btn-renew.js-free-renew[data-uuid]').first
                 
                 if renew_btn.count() > 0:
@@ -192,14 +197,18 @@ def main():
                     send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（仅红框）", screenshot_target)
                     send_tg_message("🔍 【排查步骤 2/2】刚执行完点击动作的即时画面", screenshot_clicked)
 
-                    # ── 🔥 严谨的 3 次重试与 Token 判定逻辑（无多余坐标干扰） ────────────────
-                    print("🛸 激活 3 次『验证 -> 检查 Token 是否有密文』循环机制...")
+                    # ── 🔥 关键修改：点击续期后先稍等几秒，留出时间让人机验证组件完全渲染出来 ──
+                    print("⏳ 正在等待 Cloudflare 人机验证组件渲染加载...")
+                    time.sleep(5)
+
+                    # ── 🔥 严谨的 3 次重试与 Token 判定逻辑 ────────────────
+                    print("🛸 激活 3 次『检查 Checkbox -> 触发点击 -> 检查 Token 是否有密文』循环机制...")
                     success_loaded = False
                     
                     for cf_attempt in range(3):
                         handle_cloudflare_turnstile(page)
                         try:
-                            print(f"[INFO] 正在验证云盾拦截是否成功穿透 (尝试次数: {cf_attempt + 1})...")
+                            print(f"[INFO] 正在检测验证状态 (尝试次数: {cf_attempt + 1})...")
                             time.sleep(5)
                             
                             # 严格依据 input 内是否有 Token 密文来判定是否成功通过
@@ -211,7 +220,7 @@ def main():
                             ''')
                             
                             if cf_token_value and len(cf_token_value.strip()) > 0:
-                                print(f"[INFO] 验证成功！云盾 Token 令牌已顺利生成填充 (尝试次数: {cf_attempt + 1})")
+                                print(f"[INFO] 验证通过！云盾 Token 令牌已顺利生成填充 (尝试次数: {cf_attempt + 1})")
                                 success_loaded = True
                                 break
                             else:
@@ -228,7 +237,6 @@ def main():
                     send_tg_message(f"🛡️ 【CF验证结果】是否成功通过: {success_loaded}", screenshot_cf)
 
                     if success_loaded:
-                        # 等待并刷新检查结果
                         print("[INFO] CF 验证已通过，等待后端同步数据...")
                         page.wait_for_timeout(5000)
                         page.reload(wait_until="load")
