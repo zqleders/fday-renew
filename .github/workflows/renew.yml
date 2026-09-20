@@ -22,8 +22,10 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install playwright requests
-        playwright install chromium
+        pip install seleniumbase requests
+        # 安装 SeleniumBase 的 UC 模式所需浏览器环境（会自动配置 Chrome / ChromeDriver）
+        seleniumbase install chromedriver
+        python -c "from seleniumbase import SB; print('SeleniumBase ready')"
 
     - name: 启用 WARP 网络
       uses: fscarmen/warp-on-actions@v1.3
