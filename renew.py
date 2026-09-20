@@ -128,7 +128,15 @@ def main():
             # 进入服务页
             print(f"正在跳转至服务页: {SERVICES_URL}")
             sb.driver.get(SERVICES_URL)
-            time.sleep(5)
+            
+            # ── 🔥 显式等待服务状态元素加载，防止读取为空 ──
+            print("⏳ 正在等待服务状态元素渲染...")
+            try:
+                sb.wait_for_element('.service-status', timeout=15)
+            except Exception as wait_err:
+                print(f"[WARN] 等待 .service-status 超时: {wait_err}")
+
+            time.sleep(3)
 
             # 备份网页源码用于排查
             try:
@@ -141,15 +149,21 @@ def main():
             status_elements = sb.find_elements('.service-status')
             status_text = ""
             for i in range(len(status_elements)):
-                txt = status_elements[i].text
+                txt = status_elements[i].text.strip()
                 if "Renouvellement" in txt or "/" in txt:
                     status_text = txt
                     break
             
             if not status_text and len(status_elements) > 0:
-                status_text = status_elements[0].text
+                status_text = status_elements[0].text.strip()
 
-            print(f"当前状态文本: {status_text}")
+            print(f"当前状态文本: '{status_text}'")
+
+            if not status_text or ("/" not in status_text and ":" not in status_text):
+                print("[ERROR] 未能成功获取到有效的服务状态或到期时间文本！")
+                sb.driver.save_screenshot(str(screenshot_target))
+                tg_send_photo(str(screenshot_target), "❌ *脚本运行异常*: 未能获取到服务状态文本，可能页面结构变动或加载失败。")
+                sys.exit(1)
 
             date_str = status_text.split(":")[-1].strip()
             expire_date = datetime.strptime(date_str, "%d/%m/%Y").date()
@@ -231,12 +245,12 @@ def main():
                         new_status_elements = sb.find_elements('.service-status')
                         new_status_text = ""
                         for i in range(len(new_status_elements)):
-                            txt = new_status_elements[i].text
+                            txt = new_status_elements[i].text.strip()
                             if "Renouvellement" in txt or "/" in txt:
                                 new_status_text = txt
                                 break
                         if not new_status_text and len(new_status_elements) > 0:
-                            new_status_text = new_status_elements[0].text
+                            new_status_text = new_status_elements[0].text.strip()
 
                         new_date_str = new_status_text.split(":")[-1].strip()
                         new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
