@@ -49,11 +49,10 @@ def send_tg_message(text, image_path=None):
 
 def handle_cloudflare_turnstile(page):
     """
-    严谨的 Cloudflare Turnstile 验证处理逻辑：
+    更稳健的 Cloudflare Turnstile 验证处理逻辑：
     1. 检查页面是否存在 cf-turnstile-response 输入框
-    2. 寻找 challenges.cloudflare.com 的 iframe
-    3. 在 iframe 内部精准判断是否存在 checkbox 元素
-    4. 只有当明确找到了该 checkbox 元素时，才对其进行点击打勾
+    2. 扩大 iframe 搜索范围（匹配 src 包含 turnstile 或 challenge 的 iframe）
+    3. 在 iframe 内部精准寻找 checkbox 并点击
     """
     try:
         time.sleep(2)
@@ -62,27 +61,50 @@ def handle_cloudflare_turnstile(page):
             print("[INFO] 当前页面未检测到 cf-turnstile-response 输入框，无需处理验证。")
             return True
         
-        print("[INFO] 检测到 Cloudflare 验证输入框，正在搜寻验证 iframe...")
+        print("[INFO] 检测到 Cloudflare 验证输入框，正在扩大范围搜寻验证 iframe...")
         
-        iframe_selector = 'iframe[src*="challenges.cloudflare.com"]'
-        iframe_element = page.locator(iframe_selector)
+        # 优化：不局限于特定的完整域名，只要 src 带有 turnstile 或 challenge 即匹配
+        iframe_selectors = [
+            'iframe[src*="turnstile"]',
+            'iframe[src*="challenge"]',
+            'iframe[src*="cloudflare"]'
+        ]
         
-        if iframe_element.count() > 0:
-            frame = page.frame_locator(iframe_selector)
-            time.sleep(1)
-            
-            # 严格判断：在 iframe 内部寻找人机验证的 CHECKBOX 元素
-            checkbox = frame.locator('input[type="checkbox"]')
-            checkbox_count = checkbox.count()
-            
-            if checkbox_count > 0:
-                print(f"[INFO] 成功找到了 CF 验证的 Checkbox 元素 (数量: {checkbox_count})，准备执行打勾点击...")
-                checkbox.first.click(force=True)
-                print("[INFO] 已成功点击 CF 验证的 Checkbox")
+        clicked = False
+        for selector in iframe_selectors:
+            iframe_element = page.locator(selector)
+            if iframe_element.count() > 0:
+                print(f"[INFO] 匹配到验证 iframe 规则: {selector} (数量: {iframe_element.count()})")
+                for i in range(iframe_element.count()):
+                    try:
+                        frame = page.frame_locator(selector).nth(i)
+                        checkbox = frame.locator('input[type="checkbox"]')
+                        if checkbox.count() > 0:
+                            print("[INFO] 在该 iframe 中成功定位到 checkbox 元素，准备点击...")
+                            checkbox.first.click(force=True)
+                            clicked = True
+                            break
+                        else:
+                            # 尝试点整个 iframe 的 body
+                            body = frame.locator('body')
+                            if body.count() > 0:
+                                body.click(force=True)
+                                print("[INFO] 未找到单独 checkbox，已点击该 iframe 的 body 主体")
+                                clicked = True
+                                break
+                    except Exception as sub_e:
+                        print(f"[DEBUG] 尝试遍历 iframe [{i}] 发生异常: {sub_e}")
+                if clicked:
+                    break
+        
+        if not clicked:
+            print("[INFO] 未能在任何识别到的 iframe 中找到可交互的验证元素，尝试直接在主页面寻找...")
+            main_checkbox = page.locator('input[type="checkbox"]')
+            if main_checkbox.count() > 0:
+                main_checkbox.first.click(force=True)
+                print("[INFO] 已点击主页面中的 checkbox")
             else:
-                print("[INFO] 虽然找到了 CF 的 iframe，但未在其中检测到 input[type='checkbox'] 元素")
-        else:
-            print("[INFO] 未找到匹配的 challenges.cloudflare.com iframe 元素")
+                print("[INFO] 主页面也未找到 checkbox 元素")
             
         time.sleep(3)
         return True
@@ -197,11 +219,11 @@ def main():
                     send_tg_message("🔍 【排查步骤 1/2】已锁定续期按钮（仅红框）", screenshot_target)
                     send_tg_message("🔍 【排查步骤 2/2】刚执行完点击动作的即时画面", screenshot_clicked)
 
-                    # ── 🔥 关键修改：点击续期后先稍等几秒，留出时间让人机验证组件完全渲染出来 ──
+                    # ── 🔥 点击续期后等待几秒，让验证码组件完全渲染出来 ──
                     print("⏳ 正在等待 Cloudflare 人机验证组件渲染加载...")
                     time.sleep(5)
 
-                    # ── 🔥 严谨的 3 次重试与 Token 判定逻辑 ────────────────
+                    # ── 🔥 3 次重试与 Token 判定逻辑 ────────────────
                     print("🛸 激活 3 次『检查 Checkbox -> 触发点击 -> 检查 Token 是否有密文』循环机制...")
                     success_loaded = False
                     
@@ -232,7 +254,7 @@ def main():
                         if cf_attempt < 2:
                             time.sleep(5)
 
-                    # 验证处理完毕后截图存档
+                    # 验证处理完毕后截图存档并发送 TG 带图通知
                     page.screenshot(path=screenshot_cf, timeout=5000, animations="disabled")
                     send_tg_message(f"🛡️ 【CF验证结果】是否成功通过: {success_loaded}", screenshot_cf)
 
