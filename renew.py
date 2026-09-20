@@ -135,16 +135,17 @@ def main():
             print(f"[DEBUG] 当前实际网页 URL: {current_url}")
             print(f"[DEBUG] 当前网页标题: {current_title}")
 
-            # ── 🔥 优化：使用 wait_for_element_present 避免因严格可见性检查而超时 ──
-            print("⏳ 正在等待服务状态元素加载...")
+            # 等待包含服务的容器加载出来
+            print("⏳ 正在等待服务详情元素加载...")
             try:
-                sb.wait_for_element_present('.service-status', timeout=20)
+                sb.wait_for_element_present('.service-details', timeout=20)
             except Exception as wait_err:
-                print(f"[WARN] 等待 .service-status 超时: {wait_err}")
+                print(f"[WARN] 等待 .service-details 超时: {wait_err}")
                 sb.driver.save_screenshot(str(screenshot_target))
-                tg_send_photo(str(screenshot_target), f"⚠️ 页面加载超时或被重定向\n当前URL: {current_url}\n未能找到 .service-status 元素")
+                tg_send_photo(str(screenshot_target), f"⚠️ 页面加载超时或被重定向\n当前URL: {current_url}\n未能找到 .service-details 元素")
                 sys.exit(1)
 
+            # 多给一点渲染时间让文字出来
             time.sleep(3)
 
             # 备份网页源码用于排查
@@ -154,27 +155,28 @@ def main():
             except:
                 pass
 
-            # 获取服务状态
-            status_elements = sb.find_elements('.service-status')
-            status_text = ""
-            for i in range(len(status_elements)):
-                txt = status_elements[i].text.strip()
-                if "Renouvellement" in txt or "/" in txt:
-                    status_text = txt
-                    break
-            
-            if not status_text and len(status_elements) > 0:
-                status_text = status_elements[0].text.strip()
+            # ── 🔥 精准提取到期时间 ──
+            # 通过 JavaScript 遍历所有 .service-info，寻找包含 "Renouvellement" 的那一项，并取出它的 strong 文本
+            date_str = sb.driver.execute_script("""
+                const infos = document.querySelectorAll('.service-info');
+                for (let info of infos) {
+                    const span = info.querySelector('span');
+                    if (span && span.textContent.includes('Renouvellement')) {
+                        const strong = info.querySelector('strong');
+                        return strong ? strong.textContent.trim() : '';
+                    }
+                }
+                return '';
+            """)
 
-            print(f"当前状态文本: '{status_text}'")
+            print(f"获取到的到期日期文本: '{date_str}'")
 
-            if not status_text or ("/" not in status_text and ":" not in status_text):
-                print("[ERROR] 未能成功获取到有效的服务状态或到期时间文本！")
+            if not date_str or "/" not in date_str:
+                print("[ERROR] 未能成功获取到有效的到期时间文本！")
                 sb.driver.save_screenshot(str(screenshot_target))
-                tg_send_photo(str(screenshot_target), "❌ *脚本运行异常*: 未能获取到服务状态文本，可能页面结构变动或加载失败。")
+                tg_send_photo(str(screenshot_target), "❌ *脚本运行异常*: 未能获取到到期时间文本，可能页面结构变动或加载未完成。")
                 sys.exit(1)
 
-            date_str = status_text.split(":")[-1].strip()
             expire_date = datetime.strptime(date_str, "%d/%m/%Y").date()
             current_date = datetime.now().date()
             
@@ -251,17 +253,18 @@ def main():
                         sb.driver.get(SERVICES_URL)
                         time.sleep(5)
                         
-                        new_status_elements = sb.find_elements('.service-status')
-                        new_status_text = ""
-                        for i in range(len(new_status_elements)):
-                            txt = new_status_elements[i].text.strip()
-                            if "Renouvellement" in txt or "/" in txt:
-                                new_status_text = txt
-                                break
-                        if not new_status_text and len(new_status_elements) > 0:
-                            new_status_text = new_status_elements[0].text.strip()
-
-                        new_date_str = new_status_text.split(":")[-1].strip()
+                        new_date_str = sb.driver.execute_script("""
+                            const infos = document.querySelectorAll('.service-info');
+                            for (let info of infos) {
+                                const span = info.querySelector('span');
+                                if (span && span.textContent.includes('Renouvellement')) {
+                                    const strong = info.querySelector('strong');
+                                    return strong ? strong.textContent.trim() : '';
+                                }
+                            }
+                            return '';
+                        """)
+                        
                         new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
                         new_remaining_days = (new_expire_date - current_date).days
 
