@@ -52,9 +52,30 @@ def tg_send_photo(photo_path: str, caption: str = ""):
     except Exception as e:
         print(f"发送 TG 图片通知失败: {e}")
 
+def handle_cloudflare_turnstile(sb):
+    """
+    100% 照搬成功项目的过 Cloudflare 逻辑：
+    使用 uc_gui_click_captcha() 进行物理 GUI 穿透点击
+    """
+    try:
+        time.sleep(2)
+        result = sb.driver.execute_script('return document.querySelector("input[name=\'cf-turnstile-response\']") !== null')
+        if not result:
+            print("[INFO] 当前页面未检测到 cf-turnstile-response 输入框，无需处理验证。")
+            return True
+        
+        print("[INFO] 发现 Turnstile 拦截，尝试使用 SB UC 模式执行物理 GUI 点击...")
+        sb.uc_gui_click_captcha()
+        time.sleep(5)
+        return True
+    except Exception as e:
+        print(f"[WARN] 处理 CF 验证时发生异常: {e}")
+        return False
+
 def main():
     screenshot_target = OUTPUT_DIR / "screenshot_target.png"
     screenshot_clicked = OUTPUT_DIR / "screenshot_clicked.png"
+    screenshot_cf = OUTPUT_DIR / "screenshot_cf.png"
     screenshot_final = OUTPUT_DIR / "screenshot_final.png"
     screenshot_error = OUTPUT_DIR / "screenshot_error.png"
 
@@ -124,6 +145,7 @@ def main():
                 tg_send_photo(str(screenshot_target), f"⚠️ 页面加载超时或被重定向\n当前URL: {current_url}\n未能找到 .service-details 元素")
                 sys.exit(1)
 
+            # 多给一点渲染时间让文字出来
             time.sleep(3)
 
             # 备份网页源码用于排查
@@ -133,7 +155,8 @@ def main():
             except:
                 pass
 
-            # 精准提取到期时间
+            # ── 🔥 精准提取到期时间 ──
+            # 通过 JavaScript 遍历所有 .service-info，寻找包含 "Renouvellement" 的那一项，并取出它的 strong 文本
             date_str = sb.driver.execute_script("""
                 const infos = document.querySelectorAll('.service-info');
                 for (let info of infos) {
@@ -186,19 +209,49 @@ def main():
                     time.sleep(3)
                     
                     # 截图 2：点击后的即时现场图
-                    try:
-                        sb.driver.save_screenshot(str(screenshot_clicked))
-                        tg_send_photo(str(screenshot_clicked), "🔍 【排查步骤 2/2】刚执行完点击动作的即时画面")
-                    except:
-                        pass
+                    sb.driver.save_screenshot(str(screenshot_clicked))
+                    tg_send_photo(str(screenshot_clicked), "🔍 【排查步骤 2/2】刚执行完点击动作的即时画面")
 
-                    # ── 🔥 优化后的后续处理：直接重新访问服务页检查日期是否更新 ──
-                    print("⏳ 点击完成，等待后端处理并重新加载服务页...")
-                    time.sleep(6)
+                    # ── 🔥 3 次重试与 Token 判定逻辑 ────────────────
+                    print("🛸 激活 3 次循环机制处理人机验证...")
+                    success_loaded = False
                     
-                    try:
+                    for cf_attempt in range(3):
+                        handle_cloudflare_turnstile(sb)
+                        try:
+                            print(f"[INFO] 正在检测验证状态 (尝试次数: {cf_attempt + 1})...")
+                            time.sleep(5)
+                            
+                            # 严格依据 input 内是否有 Token 密文判定
+                            cf_token_value = sb.driver.execute_script('''
+                                (() => {
+                                    const input = document.querySelector("input[name='cf-turnstile-response']");
+                                    return input ? input.value : "";
+                                })()
+                            ''')
+                            
+                            if cf_token_value and len(cf_token_value.strip()) > 0:
+                                print(f"[INFO] 验证通过！云盾 Token 令牌已顺利生成填充 (尝试次数: {cf_attempt + 1})")
+                                success_loaded = True
+                                break
+                            else:
+                                print(f"[WARN] 尝试 {cf_attempt + 1}: Token 仍为空，人机验证未通过")
+                                
+                        except Exception as e:
+                            print(f"[WARN] 尝试 {cf_attempt + 1} 异常: {e}")
+                            
+                        if cf_attempt < 2:
+                            time.sleep(5)
+
+                    # 验证处理完毕后截图存档并发送 TG 带图通知
+                    sb.driver.save_screenshot(str(screenshot_cf))
+                    tg_send_photo(str(screenshot_cf), f"🛡️ 【CF验证结果】是否成功通过: {success_loaded}")
+
+                    if success_loaded:
+                        print("[INFO] CF 验证已通过，等待后端同步数据...")
+                        time.sleep(5)
                         sb.driver.get(SERVICES_URL)
-                        time.sleep(4)
+                        time.sleep(5)
                         
                         new_date_str = sb.driver.execute_script("""
                             const infos = document.querySelectorAll('.service-info');
@@ -211,47 +264,38 @@ def main():
                             }
                             return '';
                         """)
-                    except Exception as reload_err:
-                        print(f"[WARN] 重新加载服务页时发生异常（可能浏览器会话已关闭）: {reload_err}")
-                        new_date_str = ""
+                        
+                        new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
+                        new_remaining_days = (new_expire_date - current_date).days
 
-                    # 最终状态截图
-                    try:
+                        # 最终状态截图
                         sb.driver.save_screenshot(str(screenshot_final))
-                    except:
-                        pass
 
-                    if new_date_str and new_date_str != old_date_str:
-                        try:
-                            new_expire_date = datetime.strptime(new_date_str, "%d/%m/%Y").date()
-                            new_remaining_days = (new_expire_date - current_date).days
-                        except:
-                            new_remaining_days = "?"
-
-                        msg = (
-                            f"✅ 续期成功通知\n"
-                            f"━━━━━━━━━━━━━━\n"
-                            f"🖥 服务器: Fday\n"
-                            f"🕒 续期时间: {current_time_str}\n"
-                            f"📅 新到期时间: {new_date_str}\n"
-                            f"⏳ 剩余时长: {new_remaining_days}天"
-                        )
-                        print(msg)
-                        try:
+                        if new_date_str != old_date_str:
+                            msg = (
+                                f"✅ 续期成功通知 (验证码通过)\n"
+                                f"━━━━━━━━━━━━━━\n"
+                                f"🖥 服务器: Fday\n"
+                                f"🕒 续期时间: {current_time_str}\n"
+                                f"📅 新到期时间: {new_date_str}\n"
+                                f"⏳ 剩余时长: {new_remaining_days}天"
+                            )
+                            print(msg)
                             tg_send_photo(str(screenshot_final), msg)
-                        except:
-                            tg_send(msg)
+                        else:
+                            msg = (
+                                f"⚠️ 续期状态异常 (过完验证后日期未变)\n"
+                                f"━━━━━━━━━━━━━━\n"
+                                f"🖥 服务器: Fday\n"
+                                f"🕒 检测时间: {current_time_str}\n"
+                                f"📅 当前到期日: {new_date_str}\n"
+                                f"💬 提示: 已通过人机验证，但后端未接受续期请求。"
+                            )
+                            print(msg)
+                            tg_send_photo(str(screenshot_final), msg)
                     else:
-                        # 即使因为浏览器断开没拿到新日期，但既然点下去了，发个通用成功/已触发通知
-                        msg = (
-                            f"✅ 续期操作已触发\n"
-                            f"━━━━━━━━━━━━━━\n"
-                            f"🖥 服务器: Fday\n"
-                            f"🕒 触发时间: {current_time_str}\n"
-                            f"💬 提示: 续期按钮已点击，页面已响应（如已收到续期成功提示请忽略）。"
-                        )
-                        print(msg)
-                        tg_send(msg)
+                        print("[ERROR] 经过 3 次循环重试，CF 验证仍未通过（Token 为空）")
+                        tg_send_photo(str(screenshot_cf), "❌ *续期失败*: 经过 3 次重试，CF 验证未能成功通过（Token 校验未通过）。")
                 else:
                     msg = (
                         f"⏳ 续期按钮暂未激活\n"
@@ -263,11 +307,8 @@ def main():
                         f"💬 提示: 未检测到符合条件的续期按钮。"
                     )
                     print(msg)
-                    try:
-                        sb.driver.save_screenshot(str(screenshot_target))
-                        tg_send_photo(str(screenshot_target), msg)
-                    except:
-                        tg_send(msg)
+                    sb.driver.save_screenshot(str(screenshot_target))
+                    tg_send_photo(str(screenshot_target), msg)
             else:
                 msg = (
                     f"ℹ️ 服务器状态通知\n"
@@ -279,11 +320,8 @@ def main():
                     f"💬 提示: 剩余天数大于2天，暂不需要续期。"
                 )
                 print(msg)
-                try:
-                    sb.driver.save_screenshot(str(screenshot_target))
-                    tg_send_photo(str(screenshot_target), msg)
-                except:
-                    tg_send(msg)
+                sb.driver.save_screenshot(str(screenshot_target))
+                tg_send_photo(str(screenshot_target), msg)
 
         print("[INFO] 脚本运行结束")
         os._exit(0)
